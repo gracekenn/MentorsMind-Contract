@@ -2,6 +2,7 @@
 members = [
     "escrow",
     "contracts/verification",
+    "contracts/mnt-token",
     # "multisig",
     # "payment-router",
 ]
