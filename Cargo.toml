@@ -2,14 +2,14 @@
 resolver = "2"
 members = [
     "escrow",
+    "contracts/governance",
+    "contracts/allowance",
     "contracts/verification",
-    "contracts/mnt-token",
-    "contracts/treasury",
-    "contracts/staking",
+    "contracts/oracle",
+    "contracts/timelock",
+    "contracts/vesting",
+    "contracts/payment_router",
     "tests",
-    "contracts/referral",
-    # "multisig",
-    # "payment-router",
 ]
 
 [workspace.package]

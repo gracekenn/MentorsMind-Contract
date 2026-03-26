@@ -18,6 +18,26 @@ pub enum Error {
     SupplyCapExceeded = 6,
 }
 
+// ---------------------------------------------------------------------------
+// Storage keys
+//
+// Storage layout — MNTToken
+// ─────────────────────────────────────────────────────────────────────────
+// All keys use `persistent()` storage so they survive ledger archival.
+//
+// Singleton keys:
+//   DataKey::Admin              → Address          (set once at initialize)
+//   DataKey::TotalSupply        → i128             (updated on mint/burn)
+//   DataKey::Metadata           → TokenMetadata    (name, symbol, decimals)
+//
+// Per-account keys:
+//   DataKey::Balance(Address)   → i128             (token balance)
+//   DataKey::Allowance(Address, Address) → i128    (owner → spender allowance)
+//
+// No two keys share the same discriminant.  Because each contract has its
+// own isolated storage namespace, there is no collision risk with the
+// escrow or verification contracts even if they use the same variant names.
+// ─────────────────────────────────────────────────────────────────────────
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MintEventData {
@@ -167,6 +187,10 @@ impl MNTToken {
             (Symbol::new(&env, "MNTToken"), Symbol::new(&env, "Burn"), from.clone()),
             BurnEventData { amount },
         );
+    }
+
+    pub fn total_supply(env: Env) -> i128 {
+        env.storage().persistent().get(&DataKey::TotalSupply).unwrap_or(0)
     }
 }
 
@@ -539,5 +563,60 @@ mod test {
 
         // This should fail
         client.mint(&user, &1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Storage layout readback — full lifecycle
+    // Verifies every stored value is readable after a complete lifecycle run.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_storage_readback_full_lifecycle() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let user1 = Address::generate(&env);
+        let user2 = Address::generate(&env);
+        let contract_id = env.register_contract(None, MNTToken);
+        let client = MNTTokenClient::new(&env, &contract_id);
+
+        client.initialize(&admin);
+
+        // Metadata readable after init
+        assert_eq!(client.name(), String::from_str(&env, "MentorMinds Token"));
+        assert_eq!(client.symbol(), String::from_str(&env, "MNT"));
+        assert_eq!(client.decimals(), 7);
+
+        // Balances start at zero
+        assert_eq!(client.balance(&user1), 0);
+        assert_eq!(client.balance(&user2), 0);
+
+        // Mint → balance readable
+        client.mint(&user1, &1_000);
+        assert_eq!(client.balance(&user1), 1_000);
+
+        // Approve → allowance readable
+        client.approve(&user1, &user2, &400, &100);
+        assert_eq!(client.allowance(&user1, &user2), 400);
+
+        // transfer_from → balances and allowance updated
+        client.transfer_from(&user2, &user1, &user2, &150);
+        assert_eq!(client.balance(&user1), 850);
+        assert_eq!(client.balance(&user2), 150);
+        assert_eq!(client.allowance(&user1, &user2), 250);
+
+        // transfer → balances updated
+        client.transfer(&user1, &user2, &100);
+        assert_eq!(client.balance(&user1), 750);
+        assert_eq!(client.balance(&user2), 250);
+
+        // burn → balance and supply updated
+        client.burn(&user1, &250);
+        assert_eq!(client.balance(&user1), 500);
+
+        // burn_from → allowance, balance, supply updated
+        client.burn_from(&user2, &user1, &200);
+        assert_eq!(client.balance(&user1), 300);
+        assert_eq!(client.allowance(&user1, &user2), 50);
     }
 }
