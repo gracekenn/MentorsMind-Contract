@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, BytesN, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Symbol};
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -10,9 +10,34 @@ pub struct VerificationRecord {
     pub is_active: bool,
 }
 
-const ADMIN: Symbol = symbol_short!("ADMIN");
-const VER_KEY: Symbol = symbol_short!("VER");
-const TIER_KEY: Symbol = symbol_short!("TIER");
+// ---------------------------------------------------------------------------
+// Storage keys
+//
+// Storage layout — VerificationContract
+// ─────────────────────────────────────────────────────────────────────────
+// All keys use `persistent()` storage so they survive ledger archival.
+//
+// Singleton keys:
+//   DataKey::Admin                  → Address          (set once at initialize)
+//
+// Per-mentor keys:
+//   DataKey::Verification(Address)  → VerificationRecord
+//   DataKey::Tier(Address)          → i32              (reputation tier, default 0)
+//
+// No two keys share the same discriminant.  Because each contract has its
+// own isolated storage namespace, there is no collision risk with the
+// escrow or mnt-token contracts even if they use the same variant names.
+// ─────────────────────────────────────────────────────────────────────────
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum DataKey {
+    /// Platform admin address.
+    Admin,
+    /// Verification record for a mentor, keyed by mentor address.
+    Verification(Address),
+    /// Reputation tier for a mentor, keyed by mentor address.
+    Tier(Address),
+}
 
 #[contract]
 pub struct VerificationContract;
@@ -27,10 +52,10 @@ impl VerificationContract {
     /// Panics if:
     /// - Contract is already initialized
     pub fn initialize(env: Env, admin: Address) {
-        if env.storage().persistent().has(&ADMIN) {
+        if env.storage().persistent().has(&DataKey::Admin) {
             panic!("Already initialized");
         }
-        env.storage().persistent().set(&ADMIN, &admin);
+        env.storage().persistent().set(&DataKey::Admin, &admin);
     }
 
     /// Verify a mentor with credentials (admin only).
@@ -46,7 +71,7 @@ impl VerificationContract {
         let admin: Address = env
             .storage()
             .persistent()
-            .get(&ADMIN)
+            .get(&DataKey::Admin)
             .expect("Not initialized");
         admin.require_auth();
         let now = env.ledger().timestamp();
@@ -56,14 +81,14 @@ impl VerificationContract {
             expiry,
             is_active: true,
         };
-        let key = (VER_KEY, mentor.clone());
+        let key = DataKey::Verification(mentor.clone());
         env.storage().persistent().set(&key, &rec);
-        let tkey = (TIER_KEY, mentor.clone());
+        let tkey = DataKey::Tier(mentor.clone());
         if !env.storage().persistent().has(&tkey) {
             env.storage().persistent().set(&tkey, &0i32);
         }
         env.events()
-            .publish((symbol_short!("mentor_verified"), mentor), (rec.credential_hash, rec.expiry, rec.verified_at));
+            .publish((Symbol::new(&env, "mentor_vrf"), mentor), (rec.credential_hash, rec.expiry, rec.verified_at));
     }
 
     /// Revoke a mentor's verification (admin only).
@@ -80,10 +105,10 @@ impl VerificationContract {
         let admin: Address = env
             .storage()
             .persistent()
-            .get(&ADMIN)
+            .get(&DataKey::Admin)
             .expect("Not initialized");
         admin.require_auth();
-        let key = (VER_KEY, mentor.clone());
+        let key = DataKey::Verification(mentor.clone());
         let mut rec: VerificationRecord = env
             .storage()
             .persistent()
@@ -92,11 +117,11 @@ impl VerificationContract {
         rec.is_active = false;
         env.storage().persistent().set(&key, &rec);
         env.events()
-            .publish((symbol_short!("verification_revoked"), mentor), ());
+            .publish((Symbol::new(&env, "vrf_revoked"), mentor), ());
     }
 
     pub fn is_verified(env: Env, mentor: Address) -> bool {
-        let key = (VER_KEY, mentor);
+        let key = DataKey::Verification(mentor);
         let rec: Option<VerificationRecord> = env.storage().persistent().get(&key);
         match rec {
             None => false,
@@ -105,7 +130,7 @@ impl VerificationContract {
     }
 
     pub fn get_verification(env: Env, mentor: Address) -> VerificationRecord {
-        let key = (VER_KEY, mentor);
+        let key = DataKey::Verification(mentor);
         env.storage()
             .persistent()
             .get(&key)
@@ -187,5 +212,47 @@ mod test {
             li.timestamp += 11;
         });
         assert!(!client.is_verified(&mentor));
+    }
+
+    // -----------------------------------------------------------------------
+    // Storage layout readback — full lifecycle
+    // Verifies every stored value is readable after a complete lifecycle run.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_storage_readback_full_lifecycle() {
+        let (env, contract_id, _admin) = setup();
+        let client = VerificationContractClient::new(&env, &contract_id);
+
+        let mentor = Address::generate(&env);
+        let hash: BytesN<32> = BytesN::from_array(&env, &[7u8; 32]);
+        let now = env.ledger().timestamp();
+        let expiry = now + 500;
+
+        // Not verified before verify_mentor
+        assert!(!client.is_verified(&mentor));
+
+        // Verify → record readable
+        client.verify_mentor(&mentor, &hash, &expiry);
+        let rec = client.get_verification(&mentor);
+        assert_eq!(rec.credential_hash, hash);
+        assert_eq!(rec.expiry, expiry);
+        assert_eq!(rec.is_active, true);
+        assert!(rec.verified_at > 0);
+        assert!(client.is_verified(&mentor));
+
+        // Revoke → is_active flipped, record still readable
+        client.revoke_verification(&mentor);
+        let rec = client.get_verification(&mentor);
+        assert_eq!(rec.is_active, false);
+        assert!(!client.is_verified(&mentor));
+
+        // Re-verify with new hash → record updated
+        let hash2: BytesN<32> = BytesN::from_array(&env, &[8u8; 32]);
+        client.verify_mentor(&mentor, &hash2, &(expiry + 100));
+        let rec2 = client.get_verification(&mentor);
+        assert_eq!(rec2.credential_hash, hash2);
+        assert_eq!(rec2.is_active, true);
+        assert!(client.is_verified(&mentor));
     }
 }

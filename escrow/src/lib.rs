@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, Env, Symbol,
+    contract, contractimpl, contracttype, token, Address, Env, Symbol,
 };
 
 // ---------------------------------------------------------------------------
@@ -45,23 +45,53 @@ pub struct Escrow {
 
 // ---------------------------------------------------------------------------
 // Storage keys
-// ---------------------------------------------------------------------------
-
-const ESCROW_COUNT: Symbol = symbol_short!("ESC_CNT");
-const ADMIN: Symbol = symbol_short!("ADMIN");
-const TREASURY: Symbol = symbol_short!("TREASURY");
-const FEE_BPS: Symbol = symbol_short!("FEE_BPS");
-/// Default auto-release delay in seconds (configurable at init).
-const AUTO_REL_DLY: Symbol = symbol_short!("AR_DELAY");
+//
+// Storage layout — EscrowContract
+// ─────────────────────────────────────────────────────────────────────────
+// All keys use `persistent()` storage so they survive ledger archival.
+// TTL is bumped on every read/write (threshold=500_000, bump=1_000_000).
+//
+// Singleton keys (instance-level config):
+//   DataKey::Admin          → Address          (set once at initialize)
+//   DataKey::Treasury       → Address          (updatable by admin)
+//   DataKey::FeeBps         → u32              (0–1000; updatable by admin)
+//   DataKey::EscrowCount    → u64              (monotonically increasing)
+//   DataKey::AutoRelDelay   → u64              (seconds; set at initialize)
+//
+// Per-escrow keys:
+//   DataKey::Escrow(u64)    → Escrow           (keyed by escrow id)
+//
+// Per-token allowlist keys:
+//   DataKey::ApprovedToken(Address) → bool     (true = approved)
+//
+// No two keys share the same discriminant, so namespace collisions are
+// impossible within this contract.  Because each contract has its own
+// isolated storage, there is also no cross-contract collision risk.
+// ─────────────────────────────────────────────────────────────────────────
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum DataKey {
+    /// Platform admin address.
+    Admin,
+    /// Treasury address that receives platform fees.
+    Treasury,
+    /// Platform fee in basis points (e.g. 500 = 5%).
+    FeeBps,
+    /// Global escrow counter (also used as the next escrow id).
+    EscrowCount,
+    /// Default auto-release delay in seconds.
+    AutoRelDelay,
+    /// Individual escrow record, keyed by its numeric id.
+    Escrow(u64),
+    /// Approved-token allowlist entry, keyed by token contract address.
+    ApprovedToken(Address),
+}
 
 /// Maximum configurable fee: 10% = 1 000 basis points.
 const MAX_FEE_BPS: u32 = 1_000;
 
 /// Default auto-release delay: 72 hours in seconds.
 const DEFAULT_AUTO_RELEASE_DELAY: u64 = 72 * 60 * 60;
-
-// Approved token registry key prefix: ("APRV_TOK", address) → bool
-const APPROVED_TOKEN_KEY: Symbol = symbol_short!("APRV_TOK");
 
 // ---------------------------------------------------------------------------
 // TTL constants (in ledgers; ~5 s/ledger → 1 000 000 ≈ 57 days)
@@ -102,7 +132,7 @@ impl EscrowContract {
         approved_tokens: soroban_sdk::Vec<Address>,
         auto_release_delay_secs: u64,
     ) {
-        if env.storage().persistent().has(&ADMIN) {
+        if env.storage().persistent().has(&DataKey::Admin) {
             panic!("Already initialized");
         }
 
@@ -110,25 +140,25 @@ impl EscrowContract {
             panic!("Fee exceeds maximum (1000 bps)");
         }
 
-        env.storage().persistent().set(&ADMIN, &admin);
+        env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage()
             .persistent()
-            .extend_ttl(&ADMIN, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::Admin, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
 
-        env.storage().persistent().set(&TREASURY, &treasury);
+        env.storage().persistent().set(&DataKey::Treasury, &treasury);
         env.storage()
             .persistent()
-            .extend_ttl(&TREASURY, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::Treasury, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
 
-        env.storage().persistent().set(&FEE_BPS, &fee_bps);
+        env.storage().persistent().set(&DataKey::FeeBps, &fee_bps);
         env.storage()
             .persistent()
-            .extend_ttl(&FEE_BPS, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::FeeBps, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
 
-        env.storage().persistent().set(&ESCROW_COUNT, &0u64);
+        env.storage().persistent().set(&DataKey::EscrowCount, &0u64);
         env.storage()
             .persistent()
-            .extend_ttl(&ESCROW_COUNT, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::EscrowCount, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
 
         // Store configurable auto-release delay; fall back to 72 hours if 0.
         let delay = if auto_release_delay_secs == 0 {
@@ -136,10 +166,10 @@ impl EscrowContract {
         } else {
             auto_release_delay_secs
         };
-        env.storage().persistent().set(&AUTO_REL_DLY, &delay);
+        env.storage().persistent().set(&DataKey::AutoRelDelay, &delay);
         env.storage()
             .persistent()
-            .extend_ttl(&AUTO_REL_DLY, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::AutoRelDelay, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
 
         // Register each approved token
         for token_addr in approved_tokens.iter() {
@@ -162,21 +192,21 @@ impl EscrowContract {
         let admin: Address = env
             .storage()
             .persistent()
-            .get(&ADMIN)
+            .get(&DataKey::Admin)
             .expect("Not initialized");
         env.storage()
             .persistent()
-            .extend_ttl(&ADMIN, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::Admin, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
         admin.require_auth();
 
         if new_fee_bps > MAX_FEE_BPS {
             panic!("Fee exceeds maximum (1000 bps)");
         }
 
-        env.storage().persistent().set(&FEE_BPS, &new_fee_bps);
+        env.storage().persistent().set(&DataKey::FeeBps, &new_fee_bps);
         env.storage()
             .persistent()
-            .extend_ttl(&FEE_BPS, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::FeeBps, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
     }
 
     /// Update the treasury address — admin only.
@@ -192,17 +222,17 @@ impl EscrowContract {
         let admin: Address = env
             .storage()
             .persistent()
-            .get(&ADMIN)
+            .get(&DataKey::Admin)
             .expect("Not initialized");
         env.storage()
             .persistent()
-            .extend_ttl(&ADMIN, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::Admin, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
         admin.require_auth();
 
-        env.storage().persistent().set(&TREASURY, &new_treasury);
+        env.storage().persistent().set(&DataKey::Treasury, &new_treasury);
         env.storage()
             .persistent()
-            .extend_ttl(&TREASURY, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::Treasury, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
     }
 
     /// Add or remove an approved token (admin only).
@@ -218,11 +248,11 @@ impl EscrowContract {
         let admin: Address = env
             .storage()
             .persistent()
-            .get(&ADMIN)
+            .get(&DataKey::Admin)
             .expect("Not initialized");
         env.storage()
             .persistent()
-            .extend_ttl(&ADMIN, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::Admin, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
         admin.require_auth();
 
         Self::_set_token_approved(&env, &token_address, approved);
@@ -282,19 +312,19 @@ impl EscrowContract {
         let auto_release_delay: u64 = env
             .storage()
             .persistent()
-            .get(&AUTO_REL_DLY)
+            .get(&DataKey::AutoRelDelay)
             .unwrap_or(DEFAULT_AUTO_RELEASE_DELAY);
         env.storage()
             .persistent()
-            .extend_ttl(&AUTO_REL_DLY, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::AutoRelDelay, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
 
         // --- Increment and persist escrow counter ---
-        let mut count: u64 = env.storage().persistent().get(&ESCROW_COUNT).unwrap_or(0);
+        let mut count: u64 = env.storage().persistent().get(&DataKey::EscrowCount).unwrap_or(0);
         count = count.checked_add(1).expect("Counter overflow");
-        env.storage().persistent().set(&ESCROW_COUNT, &count);
+        env.storage().persistent().set(&DataKey::EscrowCount, &count);
         env.storage()
             .persistent()
-            .extend_ttl(&ESCROW_COUNT, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::EscrowCount, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
 
         // --- Transfer tokens from learner → contract ---
         token_client.transfer(&learner, &env.current_contract_address(), &amount);
@@ -313,11 +343,11 @@ impl EscrowContract {
             net_amount: 0,
             session_end_time,
             auto_release_delay,
-            dispute_reason: symbol_short!(""),
+            dispute_reason: Symbol::new(&env, ""),
             resolved_at: 0,
         };
 
-        let key = (symbol_short!("ESCROW"), count);
+        let key = DataKey::Escrow(count);
         env.storage().persistent().set(&key, &escrow);
         env.storage()
             .persistent()
@@ -325,7 +355,7 @@ impl EscrowContract {
 
         // --- Emit event (includes token_address and session_end_time) ---
         env.events().publish(
-            (symbol_short!("created"), count),
+            (Symbol::new(&env, "created"), count),
             (
                 mentor,
                 learner,
@@ -355,7 +385,7 @@ impl EscrowContract {
     /// - Caller is not the learner or admin
     /// - Caller fails authorization check
     pub fn release_funds(env: Env, caller: Address, escrow_id: u64) {
-        let key = (symbol_short!("ESCROW"), escrow_id);
+        let key = DataKey::Escrow(escrow_id);
         env.storage()
             .persistent()
             .extend_ttl(&key, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
@@ -373,11 +403,11 @@ impl EscrowContract {
         let admin: Address = env
             .storage()
             .persistent()
-            .get(&ADMIN)
+            .get(&DataKey::Admin)
             .expect("Admin not found");
         env.storage()
             .persistent()
-            .extend_ttl(&ADMIN, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::Admin, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
 
         // Auth check: caller must be learner OR admin
         caller.require_auth();
@@ -400,7 +430,7 @@ impl EscrowContract {
     /// - Escrow status is not `Active`.
     /// - The auto-release window has not yet elapsed.
     pub fn try_auto_release(env: Env, escrow_id: u64) {
-        let key = (symbol_short!("ESCROW"), escrow_id);
+        let key = DataKey::Escrow(escrow_id);
         env.storage()
             .persistent()
             .extend_ttl(&key, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
@@ -428,7 +458,7 @@ impl EscrowContract {
         // Emit a dedicated `auto_released` event *before* the internal release
         // so listeners can distinguish this path from a manual release.
         env.events()
-            .publish((symbol_short!("auto_rel"), escrow_id), (escrow_id, now));
+            .publish((Symbol::new(&env, "auto_rel"), escrow_id), (escrow_id, now));
 
         Self::_do_release(&env, &mut escrow, &key);
     }
@@ -453,7 +483,7 @@ impl EscrowContract {
     /// - Caller is not the mentor or learner
     /// - Caller fails authorization check
     pub fn dispute(env: Env, caller: Address, escrow_id: u64, reason: Symbol) {
-        let key = (symbol_short!("ESCROW"), escrow_id);
+        let key = DataKey::Escrow(escrow_id);
         env.storage()
             .persistent()
             .extend_ttl(&key, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
@@ -479,7 +509,7 @@ impl EscrowContract {
         env.storage().persistent().set(&key, &escrow);
 
         env.events().publish(
-            (symbol_short!("disp_opnd"), escrow_id),
+            (Symbol::new(&env, "disp_opnd"), escrow_id),
             (escrow_id, caller, reason, escrow.token_address),
         );
     }
@@ -523,11 +553,11 @@ impl EscrowContract {
         let admin: Address = env
             .storage()
             .persistent()
-            .get(&ADMIN)
+            .get(&DataKey::Admin)
             .expect("Not initialized");
         env.storage()
             .persistent()
-            .extend_ttl(&ADMIN, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::Admin, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
         admin.require_auth();
 
         // --- Validate split percentage ---
@@ -536,7 +566,7 @@ impl EscrowContract {
         }
 
         // --- Load escrow ---
-        let key = (symbol_short!("ESCROW"), escrow_id);
+        let key = DataKey::Escrow(escrow_id);
         env.storage()
             .persistent()
             .extend_ttl(&key, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
@@ -595,7 +625,7 @@ impl EscrowContract {
 
         // --- Emit event ---
         env.events().publish(
-            (symbol_short!("disp_res"), escrow_id),
+            (Symbol::new(&env, "disp_res"), escrow_id),
             (
                 escrow_id,
                 mentor_pct,
@@ -627,14 +657,14 @@ impl EscrowContract {
         let admin: Address = env
             .storage()
             .persistent()
-            .get(&ADMIN)
+            .get(&DataKey::Admin)
             .expect("Admin not found");
         env.storage()
             .persistent()
-            .extend_ttl(&ADMIN, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::Admin, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
         admin.require_auth();
 
-        let key = (symbol_short!("ESCROW"), escrow_id);
+        let key = DataKey::Escrow(escrow_id);
         env.storage()
             .persistent()
             .extend_ttl(&key, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
@@ -664,7 +694,7 @@ impl EscrowContract {
         env.storage().persistent().set(&key, &escrow);
 
         env.events().publish(
-            (symbol_short!("refunded"), escrow_id),
+            (Symbol::new(&env, "refunded"), escrow_id),
             (escrow.learner.clone(), escrow.amount, escrow.token_address),
         );
     }
@@ -674,7 +704,7 @@ impl EscrowContract {
     // -----------------------------------------------------------------------
 
     pub fn get_escrow(env: Env, escrow_id: u64) -> Escrow {
-        let key = (symbol_short!("ESCROW"), escrow_id);
+        let key = DataKey::Escrow(escrow_id);
         env.storage()
             .persistent()
             .extend_ttl(&key, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
@@ -687,34 +717,34 @@ impl EscrowContract {
     pub fn get_escrow_count(env: Env) -> u64 {
         env.storage()
             .persistent()
-            .extend_ttl(&ESCROW_COUNT, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
-        env.storage().persistent().get(&ESCROW_COUNT).unwrap_or(0)
+            .extend_ttl(&DataKey::EscrowCount, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+        env.storage().persistent().get(&DataKey::EscrowCount).unwrap_or(0)
     }
 
     pub fn get_fee_bps(env: Env) -> u32 {
         env.storage()
             .persistent()
-            .extend_ttl(&FEE_BPS, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
-        env.storage().persistent().get(&FEE_BPS).unwrap_or(0)
+            .extend_ttl(&DataKey::FeeBps, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+        env.storage().persistent().get(&DataKey::FeeBps).unwrap_or(0)
     }
 
     pub fn get_treasury(env: Env) -> Address {
         env.storage()
             .persistent()
-            .extend_ttl(&TREASURY, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::Treasury, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
         env.storage()
             .persistent()
-            .get(&TREASURY)
+            .get(&DataKey::Treasury)
             .expect("Treasury not set")
     }
 
     pub fn get_auto_release_delay(env: Env) -> u64 {
         env.storage()
             .persistent()
-            .extend_ttl(&AUTO_REL_DLY, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::AutoRelDelay, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
         env.storage()
             .persistent()
-            .get(&AUTO_REL_DLY)
+            .get(&DataKey::AutoRelDelay)
             .unwrap_or(DEFAULT_AUTO_RELEASE_DELAY)
     }
 
@@ -730,11 +760,11 @@ impl EscrowContract {
     ///
     /// Computes the platform fee, transfers fee → treasury and net → mentor,
     /// then persists the updated escrow with `Released` status.
-    fn _do_release(env: &Env, escrow: &mut Escrow, key: &(Symbol, u64)) {
-        let fee_bps: u32 = env.storage().persistent().get(&FEE_BPS).unwrap_or(0u32);
+    fn _do_release(env: &Env, escrow: &mut Escrow, key: &DataKey) {
+        let fee_bps: u32 = env.storage().persistent().get(&DataKey::FeeBps).unwrap_or(0u32);
         env.storage()
             .persistent()
-            .extend_ttl(&FEE_BPS, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::FeeBps, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
 
         let platform_fee: i128 = escrow.amount
             .checked_mul(fee_bps as i128)
@@ -748,11 +778,11 @@ impl EscrowContract {
         let treasury: Address = env
             .storage()
             .persistent()
-            .get(&TREASURY)
+            .get(&DataKey::Treasury)
             .expect("Treasury not found");
         env.storage()
             .persistent()
-            .extend_ttl(&TREASURY, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&DataKey::Treasury, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
 
         let token_client = token::Client::new(env, &escrow.token_address);
 
@@ -768,7 +798,7 @@ impl EscrowContract {
         env.storage().persistent().set(key, escrow);
 
         env.events().publish(
-            (symbol_short!("released"), escrow.id),
+            (Symbol::new(env, "released"), escrow.id),
             (
                 escrow.mentor.clone(),
                 escrow.amount,
@@ -780,7 +810,7 @@ impl EscrowContract {
     }
 
     fn _set_token_approved(env: &Env, token_address: &Address, approved: bool) {
-        let key = (APPROVED_TOKEN_KEY, token_address.clone());
+        let key = DataKey::ApprovedToken(token_address.clone());
         env.storage().persistent().set(&key, &approved);
         env.storage()
             .persistent()
@@ -788,7 +818,7 @@ impl EscrowContract {
     }
 
     fn _is_token_approved(env: &Env, token_address: &Address) -> bool {
-        let key = (APPROVED_TOKEN_KEY, token_address.clone());
+        let key = DataKey::ApprovedToken(token_address.clone());
         env.storage()
             .persistent()
             .get::<_, bool>(&key)
@@ -1805,5 +1835,71 @@ mod test {
         f.client().release_funds(&f.admin, &escrow_id);
         let escrow = f.client().get_escrow(&escrow_id);
         assert_eq!(escrow.status, EscrowStatus::Released);
+    }
+
+    // -----------------------------------------------------------------------
+    // Storage layout readback — full lifecycle
+    // Verifies every stored value is readable after a complete lifecycle run.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_storage_readback_full_lifecycle() {
+        let f = TestFixture::setup_with_fee(500);
+        let client = f.client();
+
+        // --- Config keys ---
+        assert_eq!(client.get_fee_bps(), 500);
+        assert_eq!(client.get_treasury(), f.treasury);
+        assert_eq!(client.get_auto_release_delay(), DEFAULT_AUTO_RELEASE_DELAY);
+        assert_eq!(client.get_escrow_count(), 0);
+        assert!(client.is_token_approved(&f.token_address));
+
+        // --- Create escrow → Active ---
+        let id = f.create_escrow_at(0);
+        assert_eq!(client.get_escrow_count(), 1);
+        let e = client.get_escrow(&id);
+        assert_eq!(e.id, id);
+        assert_eq!(e.mentor, f.mentor);
+        assert_eq!(e.learner, f.learner);
+        assert_eq!(e.amount, 1_000);
+        assert_eq!(e.status, EscrowStatus::Active);
+        assert_eq!(e.platform_fee, 0);
+        assert_eq!(e.net_amount, 0);
+        assert_eq!(e.resolved_at, 0);
+        assert_eq!(e.token_address, f.token_address);
+
+        // --- Dispute → Disputed ---
+        let reason = Symbol::new(&f.env, "NO_SHOW");
+        client.dispute(&f.learner, &id, &reason);
+        let e = client.get_escrow(&id);
+        assert_eq!(e.status, EscrowStatus::Disputed);
+        assert_eq!(e.dispute_reason, reason);
+
+        // --- Resolve → Resolved ---
+        client.resolve_dispute(&id, &60u32);
+        let e = client.get_escrow(&id);
+        assert_eq!(e.status, EscrowStatus::Resolved);
+        assert_eq!(e.net_amount, 600);    // mentor 60%
+        assert_eq!(e.platform_fee, 400); // learner 40%
+        assert!(e.resolved_at > 0);
+
+        // --- Second escrow: create → release ---
+        let id2 = f.create_escrow_at(0);
+        client.release_funds(&f.learner, &id2);
+        let e2 = client.get_escrow(&id2);
+        assert_eq!(e2.status, EscrowStatus::Released);
+        assert_eq!(e2.platform_fee, 50);
+        assert_eq!(e2.net_amount, 950);
+
+        // --- Third escrow: create → refund ---
+        let id3 = f.create_escrow_at(0);
+        client.refund(&id3);
+        let e3 = client.get_escrow(&id3);
+        assert_eq!(e3.status, EscrowStatus::Refunded);
+
+        // --- Config still intact after all operations ---
+        assert_eq!(client.get_fee_bps(), 500);
+        assert_eq!(client.get_treasury(), f.treasury);
+        assert_eq!(client.get_escrow_count(), 3);
     }
 }
