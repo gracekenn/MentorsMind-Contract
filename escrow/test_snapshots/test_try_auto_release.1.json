@@ -78,6 +78,9 @@
                 },
                 {
                   "u64": 14400
+                },
+                {
+                  "u32": 1
                 }
               ]
             }
@@ -555,6 +558,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "sessions_completed"
+                      },
+                      "val": {
+                        "u32": 0
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "status"
                       },
                       "val": {
@@ -571,6 +582,14 @@
                       },
                       "val": {
                         "address": "CACMVW2KK4H5FZDFF2AUCAKQTEJMZZWJUIZF23XMRVYQBSXYLHZ6BKWN"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "total_sessions"
+                      },
+                      "val": {
+                        "u32": 1
                       }
                     },
                     {
@@ -1533,6 +1552,9 @@
                 },
                 {
                   "u64": 14400
+                },
+                {
+                  "u32": 1
                 }
               ]
             }
@@ -2223,6 +2245,14 @@
                 },
                 {
                   "key": {
+                    "symbol": "sessions_completed"
+                  },
+                  "val": {
+                    "u32": 0
+                  }
+                },
+                {
+                  "key": {
                     "symbol": "status"
                   },
                   "val": {
@@ -2239,6 +2269,14 @@
                   },
                   "val": {
                     "address": "CACMVW2KK4H5FZDFF2AUCAKQTEJMZZWJUIZF23XMRVYQBSXYLHZ6BKWN"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "total_sessions"
+                  },
+                  "val": {
+                    "u32": 1
                   }
                 },
                 {

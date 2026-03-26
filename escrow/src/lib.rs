@@ -32,6 +32,8 @@ pub struct Escrow {
     pub quoted_token_amount: i128,
     pub send_asset: Address,
     pub dest_asset: Address,
+    pub total_sessions: u32,
+    pub sessions_completed: u32,
 }
 
 #[contracttype]
@@ -171,8 +173,22 @@ impl EscrowContract {
         session_id: Symbol,
         token_address: Address,
         session_end_time: u64,
+        total_sessions: u32,
     ) -> u64 {
-        Self::_create_escrow_internal(env, mentor, learner, amount, session_id, token_address.clone(), session_end_time, 0, amount, token_address.clone(), token_address)
+        Self::_create_escrow_internal(
+            env,
+            mentor,
+            learner,
+            amount,
+            session_id,
+            token_address.clone(),
+            session_end_time,
+            0,
+            amount,
+            token_address.clone(),
+            token_address,
+            total_sessions,
+        )
     }
 
     pub fn release_funds(env: Env, caller: Address, escrow_id: u64) {
@@ -204,9 +220,11 @@ impl EscrowContract {
 
         Self::_do_release(&env, &mut escrow, &key);
     }
-    pub fn release_partial(env: Env, caller: Address, escrow_id: u64, amount_to_release: i128) {
+    pub fn release_partial(env: Env, caller: Address, escrow_id: u64) {
         let key = (symbol_short!("ESCROW"), escrow_id);
-        env.storage().persistent().extend_ttl(&key, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
 
         let mut escrow = Self::load_escrow(&env, &key);
 
@@ -214,28 +232,68 @@ impl EscrowContract {
             panic!("Escrow not active");
         }
 
-        if amount_to_release <= 0 || amount_to_release > escrow.amount {
-            panic!("Invalid release amount");
+        if escrow.sessions_completed >= escrow.total_sessions {
+            panic!("All sessions already released");
         }
 
-        let admin: Address = env.storage().persistent().get(&ADMIN).expect("Admin not found");
-        env.storage().persistent().extend_ttl(&ADMIN, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&ADMIN)
+            .expect("Admin not found");
+        env.storage()
+            .persistent()
+            .extend_ttl(&ADMIN, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
 
+        // Auth check: caller must be learner OR admin
         caller.require_auth();
         if caller != escrow.learner && caller != admin {
             panic!("Caller not authorized");
         }
 
+        // Calculate amount to release: total_amount / total_sessions
+        // Note: For the last session, we release whatever is remaining to handle rounding.
+        let amount_to_release = if escrow.sessions_completed + 1 == escrow.total_sessions {
+            escrow.amount
+        } else {
+            // We use the original amount (quoted_token_amount) to calculate partials
+            // to ensure they are equal. But since 'amount' is what's currently held,
+            // and it might decrease if we were doing it differently, 
+            // the logic from Acceptance Criteria says "releases amount / total_sessions".
+            // I'll assume 'amount' here refers to the total locked amount at creation.
+            // Since we update escrow.amount in this implementation (based on line 258),
+            // we should probably use a fixed reference. 
+            // Actually, the existing release_partial (line 218) was taking an 'amount_to_release' arg.
+            // The NEW requirement says "release amount / total_sessions".
+            
+            // Let's use quoted_token_amount as the total original amount.
+            escrow.quoted_token_amount.checked_div(escrow.total_sessions as i128).expect("Division error")
+        };
+
         let fee_bps: u32 = env.storage().persistent().get(&FEE_BPS).unwrap_or(0u32);
-        env.storage().persistent().extend_ttl(&FEE_BPS, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+        env.storage()
+            .persistent()
+            .extend_ttl(&FEE_BPS, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
 
-        let platform_fee: i128 = amount_to_release.checked_mul(fee_bps as i128).expect("Overflow").checked_div(10_000).expect("Division error");
-        let net_amount: i128 = amount_to_release.checked_sub(platform_fee).expect("Underflow");
+        let platform_fee: i128 = amount_to_release
+            .checked_mul(fee_bps as i128)
+            .expect("Overflow")
+            .checked_div(10_000)
+            .expect("Division error");
+        let net_amount: i128 = amount_to_release
+            .checked_sub(platform_fee)
+            .expect("Underflow");
 
-        let treasury: Address = env.storage().persistent().get(&TREASURY).expect("Treasury not found");
-        env.storage().persistent().extend_ttl(&TREASURY, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+        let treasury: Address = env
+            .storage()
+            .persistent()
+            .get(&TREASURY)
+            .expect("Treasury not found");
+        env.storage()
+            .persistent()
+            .extend_ttl(&TREASURY, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
 
-        let token_client = soroban_sdk::token::Client::new(&env, &escrow.token_address);
+        let token_client = token::Client::new(&env, &escrow.token_address);
 
         if platform_fee > 0 {
             token_client.transfer(&env.current_contract_address(), &treasury, &platform_fee);
@@ -243,17 +301,23 @@ impl EscrowContract {
 
         token_client.transfer(&env.current_contract_address(), &escrow.mentor, &net_amount);
 
+        escrow.sessions_completed += 1;
         escrow.amount = escrow.amount.checked_sub(amount_to_release).expect("Underflow");
         escrow.platform_fee = escrow.platform_fee.checked_add(platform_fee).expect("Overflow");
         escrow.net_amount = escrow.net_amount.checked_add(net_amount).expect("Overflow");
 
-        if escrow.amount == 0 {
+        if escrow.sessions_completed == escrow.total_sessions {
             escrow.status = EscrowStatus::Released;
+            let session_key = (SESSION_KEY, escrow.session_id.clone());
+            env.storage().persistent().remove(&session_key);
         }
 
         env.storage().persistent().set(&key, &escrow);
 
-        env.events().publish((symbol_short!("Escrow"), symbol_short!("rel_part"), escrow.id), (amount_to_release, net_amount));
+        env.events().publish(
+            (symbol_short!("partial"), escrow.id),
+            (escrow.sessions_completed, amount_to_release),
+        );
     }
 
     pub fn admin_release(env: Env, escrow_id: u64) {
@@ -261,7 +325,6 @@ impl EscrowContract {
         env.storage().persistent().extend_ttl(&key, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
 
         let mut escrow = Self::load_escrow(&env, &key);
-
         if escrow.status != EscrowStatus::Active {
             panic!("Escrow not active");
         }
@@ -539,7 +602,7 @@ impl EscrowContract {
         env.events().publish((symbol_short!("Escrow"), symbol_short!("review"), escrow_id), reason);
     }
 
-    pub fn create_escrow_usd(env: Env, mentor: Address, learner: Address, usd_amount: i128, token_address: Address) -> u64 {
+    pub fn create_escrow_usd(env: Env, mentor: Address, learner: Address, usd_amount: i128, token_address: Address, total_sessions: u32) -> u64 {
         let oracle: Address = env.storage().persistent().get(&ORACLE_ID).expect("oracle not set");
         let max_age: u64 = env.storage().persistent().get(&ORACLE_MAX_AGE).unwrap_or(300);
         let oracle_sym = Symbol::new(&env, "get_price");
@@ -550,7 +613,7 @@ impl EscrowContract {
         }
         let token_amount = usd_amount.checked_mul(10_000_000).expect("overflow").checked_div(price).expect("div");
         env.events().publish((symbol_short!("Escrow"), symbol_short!("usd_rate"), learner.clone()), (usd_amount, price, token_amount));
-        Self::_create_escrow_internal(env, mentor, learner, token_amount, symbol_short!("USD_SES"), token_address.clone(), now, usd_amount, token_amount, token_address.clone(), token_address)
+        Self::_create_escrow_internal(env, mentor, learner, token_amount, symbol_short!("USD_SES"), token_address.clone(), now, usd_amount, token_amount, token_address.clone(), token_address, total_sessions)
     }
 
     pub fn create_escrow_with_path_payment(
@@ -562,6 +625,7 @@ impl EscrowContract {
         dest_asset: Address,
         dest_amount: i128,
         _path: Vec<Address>,
+        total_sessions: u32,
     ) -> u64 {
         if send_max < dest_amount {
             panic!("path slippage exceeded");
@@ -580,6 +644,7 @@ impl EscrowContract {
             dest_amount,
             send_asset,
             dest_asset,
+            total_sessions,
         )
     }
 
@@ -667,6 +732,8 @@ impl EscrowContract {
                 quoted_token_amount: old.amount,
                 send_asset: old.token_address.clone(),
                 dest_asset: old.token_address,
+                total_sessions: 1,
+                sessions_completed: 0,
             };
         }
         panic!("Escrow not found");
@@ -683,6 +750,7 @@ impl EscrowContract {
         quoted_token_amount: i128,
         send_asset: Address,
         dest_asset: Address,
+        total_sessions: u32,
     ) -> u64 {
         if amount <= 0 {
             panic!("Amount must be greater than zero");
@@ -724,6 +792,8 @@ impl EscrowContract {
             quoted_token_amount,
             send_asset,
             dest_asset,
+            total_sessions,
+            sessions_completed: 0,
         };
         let key = (symbol_short!("ESCROW"), count);
         env.storage().persistent().set(&key, &escrow);
