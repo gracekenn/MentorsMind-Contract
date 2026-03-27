@@ -323,9 +323,9 @@ impl PaymentRouter {
         env: &Env,
         source_chain: u32,
         source_tx_hash: &BytesN<32>,
-        learner: &Address,
-        amount: i128,
-        token: &Address,
+        _learner: &Address,
+        _amount: i128,
+        _token: &Address,
     ) {
         let config = Self::get_config(env.clone());
 
