@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, IntoVal};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Env, IntoVal, Symbol,
+};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -51,7 +53,9 @@ pub struct ReputationContract;
 impl ReputationContract {
     pub fn initialize(env: Env, admin: Address, escrow: Address) {
         env.storage().persistent().set(&DataKey::Admin, &admin);
-        env.storage().persistent().set(&DataKey::EscrowContract, &escrow);
+        env.storage()
+            .persistent()
+            .set(&DataKey::EscrowContract, &escrow);
     }
 
     pub fn add_review(env: Env, learner: Address, escrow_id: u64, rating: u32) {
@@ -60,15 +64,23 @@ impl ReputationContract {
             panic!("rating must be between 1 and 5");
         }
 
-        let escrow_addr: Address = env.storage().persistent().get(&DataKey::EscrowContract).unwrap();
-        
+        let escrow_addr: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EscrowContract)
+            .unwrap();
+
         // Call Escrow to get details
-        let escrow: Escrow = env.invoke_contract(&escrow_addr, &Symbol::new(&env, "get_escrow"), (escrow_id,).into_val(&env));
-        
+        let escrow: Escrow = env.invoke_contract(
+            &escrow_addr,
+            &Symbol::new(&env, "get_escrow"),
+            (escrow_id,).into_val(&env),
+        );
+
         if escrow.learner != learner {
             panic!("not your escrow");
         }
-        
+
         if escrow.status != EscrowStatus::Released && escrow.status != EscrowStatus::Resolved {
             panic!("escrow not completed");
         }
@@ -80,15 +92,32 @@ impl ReputationContract {
         let current_total: u64 = env.storage().persistent().get(&r_key).unwrap_or(0);
         let current_count: u32 = env.storage().persistent().get(&c_key).unwrap_or(0);
 
-        env.storage().persistent().set(&r_key, &(current_total + rating as u64));
+        env.storage()
+            .persistent()
+            .set(&r_key, &(current_total + rating as u64));
         env.storage().persistent().set(&c_key, &(current_count + 1));
 
-        env.events().publish((symbol_short!("reput"), symbol_short!("reviewed"), mentor), (learner, rating));
+        env.events().publish(
+            (symbol_short!("reput"), symbol_short!("reviewed"), mentor),
+            (learner, rating),
+        );
     }
 
     pub fn get_rating(env: Env, mentor: Address) -> u32 {
-        let total: u64 = env.storage().persistent().get(&DataKey::MentorRating(mentor.clone())).unwrap_or(0);
-        let count: u32 = env.storage().persistent().get(&DataKey::MentorReviewCount(mentor)).unwrap_or(0);
-        if count == 0 { 0 } else { (total / count as u64) as u32 }
+        let total: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MentorRating(mentor.clone()))
+            .unwrap_or(0);
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MentorReviewCount(mentor))
+            .unwrap_or(0);
+        if count == 0 {
+            0
+        } else {
+            (total / count as u64) as u32
+        }
     }
 }

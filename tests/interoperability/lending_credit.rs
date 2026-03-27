@@ -1,8 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env};
     use crate::interoperability::mocks::{MockLendingPool, MockLendingPoolClient};
     use mentorminds_credit_score::{CreditScoreContract, CreditScoreContractClient};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        Address, Env,
+    };
 
     #[test]
     fn test_lending_pool_credit_score_check() {
@@ -28,7 +31,7 @@ mod tests {
 
         // 3. Register user
         score_client.refresh_score(&user);
-        
+
         // 4. Verification that integration exists
         let _score = score_client.get_score(&user);
     }

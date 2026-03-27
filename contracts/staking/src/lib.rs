@@ -330,8 +330,7 @@ mod test {
             let mnt_id = env.register_contract(None, MockMNT);
 
             let staking_id = env.register_contract(None, StakingContract);
-            StakingContractClient::new(&env, &staking_id)
-                .initialize(&admin, &mnt_id);
+            StakingContractClient::new(&env, &staking_id).initialize(&admin, &mnt_id);
 
             Fixture {
                 env,

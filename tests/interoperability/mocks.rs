@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, Address, Env, IntoVal, symbol_short, String};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, IntoVal, String};
 
 #[contract]
 pub struct MockToken;
@@ -16,16 +16,26 @@ impl MockToken {
         from.require_auth();
         let mut f_bal = Self::balance(env.clone(), from.clone());
         let mut t_bal = Self::balance(env.clone(), to.clone());
-        if f_bal < amount { panic!("Insuff balance"); }
+        if f_bal < amount {
+            panic!("Insuff balance");
+        }
         f_bal -= amount;
         t_bal += amount;
         env.storage().persistent().set(&from, &f_bal);
         env.storage().persistent().set(&to, &t_bal);
     }
-    pub fn name(env: Env) -> String { String::from_str(&env, "Mock") }
-    pub fn symbol(env: Env) -> String { String::from_str(&env, "MCK") }
-    pub fn decimals(_env: Env) -> u32 { 7 }
-    pub fn total_supply(_env: Env) -> i128 { 1_000_000_000 }
+    pub fn name(env: Env) -> String {
+        String::from_str(&env, "Mock")
+    }
+    pub fn symbol(env: Env) -> String {
+        String::from_str(&env, "MCK")
+    }
+    pub fn decimals(_env: Env) -> u32 {
+        7
+    }
+    pub fn total_supply(_env: Env) -> i128 {
+        1_000_000_000
+    }
 }
 
 #[contract]
@@ -57,10 +67,16 @@ pub struct MockVelocityLimits;
 #[contractimpl]
 impl MockVelocityLimits {
     pub fn set_fail(env: Env, fail: bool) {
-        env.storage().persistent().set(&soroban_sdk::symbol_short!("fail"), &fail);
+        env.storage()
+            .persistent()
+            .set(&soroban_sdk::symbol_short!("fail"), &fail);
     }
     pub fn check_and_record(env: Env, _user: Address, _amount: i128) -> bool {
-        let fail: bool = env.storage().persistent().get(&soroban_sdk::symbol_short!("fail")).unwrap_or(false);
+        let fail: bool = env
+            .storage()
+            .persistent()
+            .get(&soroban_sdk::symbol_short!("fail"))
+            .unwrap_or(false);
         !fail
     }
 }
@@ -95,7 +111,11 @@ pub struct MockLendingPool;
 #[contractimpl]
 impl MockLendingPool {
     pub fn borrow(env: Env, user: Address, _amount: i128, credit_score_addr: Address) -> bool {
-        let score: u32 = env.invoke_contract(&credit_score_addr, &symbol_short!("get_score"), (user,).into_val(&env));
+        let score: u32 = env.invoke_contract(
+            &credit_score_addr,
+            &symbol_short!("get_score"),
+            (user,).into_val(&env),
+        );
         if score < 500 {
             panic!("Credit score too low");
         }
@@ -108,6 +128,10 @@ pub struct MockHealthDashboard;
 #[contractimpl]
 impl MockHealthDashboard {
     pub fn get_summary(env: Env, escrow_addr: Address) -> u64 {
-        env.invoke_contract::<u64>(&escrow_addr, &soroban_sdk::Symbol::new(&env, "get_escrow_count"), soroban_sdk::Vec::new(&env))
+        env.invoke_contract::<u64>(
+            &escrow_addr,
+            &soroban_sdk::Symbol::new(&env, "get_escrow_count"),
+            soroban_sdk::Vec::new(&env),
+        )
     }
 }

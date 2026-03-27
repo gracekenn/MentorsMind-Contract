@@ -1,10 +1,14 @@
 #[cfg(test)]
 mod tests {
-    use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env, symbol_short, Vec, Bytes, BytesN, IntoVal, Val, Symbol};
     use crate::interoperability::mocks::MockTokenClient;
+    use mentorminds_escrow::{EscrowContract, EscrowContractClient};
     use mentorminds_governance::{GovernanceContract, GovernanceContractClient, ProposalAction};
     use mentorminds_timelock::{TimelockController, TimelockControllerClient};
-    use mentorminds_escrow::{EscrowContract, EscrowContractClient};
+    use soroban_sdk::{
+        symbol_short,
+        testutils::{Address as _, Ledger},
+        Address, Bytes, BytesN, Env, IntoVal, Symbol, Val, Vec,
+    };
 
     #[test]
     fn test_governance_timelock_escrow_chain() {
@@ -40,7 +44,7 @@ mod tests {
         // 5. Create Proposal
         let mut inner_args: Vec<Val> = Vec::new(&env);
         inner_args.push_back(1000u32.into_val(&env));
-        
+
         let delay_val: Val = (48 * 3600u64).into_val(&env);
 
         let mut schedule_args: Vec<u64> = Vec::new(&env);
@@ -72,7 +76,8 @@ mod tests {
         let op_id = BytesN::from_array(&env, &raw_id);
 
         // 8. Wait and Execute
-        env.ledger().set_timestamp(env.ledger().timestamp() + 172801);
+        env.ledger()
+            .set_timestamp(env.ledger().timestamp() + 172801);
         timelock_client.execute(&op_id);
 
         // 10. Verify

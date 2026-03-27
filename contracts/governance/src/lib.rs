@@ -114,7 +114,9 @@ impl GovernanceContract {
     pub fn set_timelock(env: Env, timelock: Address) {
         let admin: Address = env.storage().persistent().get(&ADMIN).unwrap();
         admin.require_auth();
-        env.storage().persistent().set(&DataKey::Timelock, &timelock);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Timelock, &timelock);
     }
 
     pub fn create_proposal(

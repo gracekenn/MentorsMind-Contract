@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use soroban_sdk::{testutils::Address as _, Address, Env, symbol_short, Vec};
     use crate::interoperability::mocks::MockTokenClient;
     use mentorminds_escrow::{EscrowContract, EscrowContractClient, EscrowParams};
+    use soroban_sdk::{symbol_short, testutils::Address as _, Address, Env, Vec};
 
     #[test]
     fn test_escrow_token_transfer_chain() {
@@ -43,7 +43,7 @@ mod tests {
         };
 
         let est_id = escrow_client.create_escrow(&params);
-        
+
         // Verify balance moved to escrow
         assert_eq!(token_client.balance(&learner), 0);
         assert_eq!(token_client.balance(&escrow_id), 1000);

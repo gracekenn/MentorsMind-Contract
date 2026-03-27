@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use soroban_sdk::{testutils::Address as _, Address, Env, symbol_short, Vec};
     use crate::interoperability::mocks::MockTokenClient;
-    use mentorminds_reputation::{ReputationContract, ReputationContractClient};
     use mentorminds_escrow::{EscrowContract, EscrowContractClient, EscrowParams};
+    use mentorminds_reputation::{ReputationContract, ReputationContractClient};
+    use soroban_sdk::{symbol_short, testutils::Address as _, Address, Env, Vec};
 
     #[test]
     fn test_reputation_escrow_interaction() {
@@ -66,9 +66,9 @@ mod tests {
         };
         let escrow_index2 = escrow_client.create_escrow(&params2);
         escrow_client.release_funds(&learner, &escrow_index2);
-        
+
         reput_client.add_review(&learner, &escrow_index2, &1);
-        
+
         // Average: (5 + 1) / 2 = 3
         assert_eq!(reput_client.get_rating(&mentor), 3);
     }
