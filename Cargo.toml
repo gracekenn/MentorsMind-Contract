@@ -13,6 +13,7 @@ members = [
     "contracts/shared",
     "contracts/regulatory_reporting",
     "contracts/certificates",
+    "contracts/badges",
     "tests",
 ]
 
