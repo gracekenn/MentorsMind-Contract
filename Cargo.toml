@@ -13,6 +13,13 @@ members = [
     "contracts/shared",
     "contracts/mnt-token",
     "contracts/session_nft",
+    "contracts/bridge_receiver",
+    "contracts/escrow_factory",
+    "contracts/referral",
+    "contracts/staking",
+    "contracts/subscription_analytics",
+    "contracts/treasury",
+    "contracts/interface_registry",
     "tests",
 ]
 
