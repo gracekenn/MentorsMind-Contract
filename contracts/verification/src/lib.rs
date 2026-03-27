@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, BytesN, Env, Symbol};
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -27,6 +27,14 @@ pub struct VerificationRevokedEventData {
 const ADMIN: Symbol = symbol_short!("ADMIN");
 const VER_KEY: Symbol = symbol_short!("VER");
 const TIER_KEY: Symbol = symbol_short!("TIER");
+
+#[contracttype]
+#[derive(Clone)]
+pub enum DataKey {
+    Admin,
+    Verification(Address),
+    Tier(Address),
+}
 
 #[contract]
 pub struct VerificationContract;
@@ -77,7 +85,7 @@ impl VerificationContract {
             env.storage().persistent().set(&tkey, &0i32);
         }
         env.events().publish(
-            (Symbol::new(&env, "Verification"), Symbol::new(&env, "Verified"), mentor.clone()),
+            (symbol_short!("Verify"), symbol_short!("VrfyOk"), mentor.clone()),
             MentorVerifiedEventData {
                 credential_hash: rec.credential_hash.clone(),
                 verified_at: rec.verified_at,
@@ -112,7 +120,7 @@ impl VerificationContract {
         rec.is_active = false;
         env.storage().persistent().set(&key, &rec);
         env.events().publish(
-            (Symbol::new(&env, "Verification"), Symbol::new(&env, "Revoked"), mentor.clone()),
+            (symbol_short!("Verify"), symbol_short!("Revoke"), mentor.clone()),
             VerificationRevokedEventData { revoked: true },
         );
     }

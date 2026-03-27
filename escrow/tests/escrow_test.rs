@@ -266,7 +266,7 @@ fn test_query_by_mentor_pagination() {
     // Create 5 escrows for the same mentor
     for i in 0..5 {
         let session_id = Symbol::new(&f.env, &format!("S{}", i));
-        f.client().create_escrow(&mentor, &learner, &1_000, &session_id, &f.token_address, &0);
+        f.client().create_escrow(&mentor, &learner, &1_000, &session_id, &f.token_address, &0, &1u32);
     }
     
     // Page 0, size 2 -> should return 2 escrows (ids 1, 2)
@@ -303,7 +303,7 @@ fn test_query_by_learner_pagination() {
     // Create 3 escrows for the same learner
     for i in 0..3 {
         let session_id = Symbol::new(&f.env, &format!("L{}", i));
-        f.client().create_escrow(&mentor, &learner, &1_000, &session_id, &f.token_address, &0);
+        f.client().create_escrow(&mentor, &learner, &1_000, &session_id, &f.token_address, &0, &1u32);
     }
     
     // Page 0, size 2 -> 2 escrows
@@ -325,20 +325,28 @@ fn test_query_by_status() {
     // All should be Active initially
     let active_ids = f.client().get_escrows_by_status(&EscrowStatus::Active);
     assert_eq!(active_ids.len(), 3);
-    assert!(active_ids.contains(id1));
-    assert!(active_ids.contains(id2));
-    assert!(active_ids.contains(id3));
+    fn vec_has_u64(v: &soroban_sdk::Vec<u64>, x: u64) -> bool {
+        for i in 0..v.len() {
+            if v.get(i).unwrap() == x {
+                return true;
+            }
+        }
+        false
+    }
+    assert!(vec_has_u64(&active_ids, id1));
+    assert!(vec_has_u64(&active_ids, id2));
+    assert!(vec_has_u64(&active_ids, id3));
     
     // Release one
     f.client().release_funds(&f.learner, &id1);
     
     let active_ids2 = f.client().get_escrows_by_status(&EscrowStatus::Active);
     assert_eq!(active_ids2.len(), 2);
-    assert!(!active_ids2.contains(id1));
+    assert!(!vec_has_u64(&active_ids2, id1));
     
     let released_ids = f.client().get_escrows_by_status(&EscrowStatus::Released);
     assert_eq!(released_ids.len(), 1);
-    assert!(released_ids.contains(id1));
+    assert!(vec_has_u64(&released_ids, id1));
 }
 
 #[test]
@@ -350,7 +358,7 @@ fn test_page_size_cap() {
     // Create 60 escrows
     for i in 0..60 {
         let session_id = Symbol::new(&f.env, &format!("S{}", i));
-        f.client().create_escrow(&mentor, &learner, &100, &session_id, &f.token_address, &0);
+        f.client().create_escrow(&mentor, &learner, &100, &session_id, &f.token_address, &0, &1u32);
     }
     
     // Try to get 100 per page, should be capped at 50
