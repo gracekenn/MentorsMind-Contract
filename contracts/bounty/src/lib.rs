@@ -1,7 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, Address, BytesN, Env, Symbol,
+    contract, contractimpl, contracttype, symbol_short, token, Address, BytesN, Env, IntoVal,
+    Symbol, Val, Vec,
 };
 
 // ---------------------------------------------------------------------------
@@ -10,7 +11,7 @@ use soroban_sdk::{
 
 const DISPUTE_WINDOW: u64 = 48 * 60 * 60; // 48 hours in seconds
 const TTL_THRESHOLD: u32 = 500_000;
-const TTL_BUMP: u32 = 1_000_000;
+const TTL_BUMP: u32 = 9_000_000; // large enough to survive test time jumps
 
 // ---------------------------------------------------------------------------
 // Storage keys
@@ -145,6 +146,7 @@ impl BountyContract {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::BountyCount, TTL_THRESHOLD, TTL_BUMP);
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
     }
 
     /// Post a new bounty. Transfers `reward` tokens from poster to this contract.
@@ -202,6 +204,7 @@ impl BountyContract {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::BountyCount, TTL_THRESHOLD, TTL_BUMP);
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
 
         env.events().publish(
             (symbol_short!("bounty"), symbol_short!("posted")),
@@ -261,6 +264,8 @@ impl BountyContract {
                 .extend_ttl(&DataKey::Bounty(bounty_id), TTL_THRESHOLD, TTL_BUMP);
         }
 
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
+
         env.events().publish(
             (symbol_short!("bounty"), symbol_short!("claimed")),
             BountyClaimedEvent {
@@ -285,7 +290,11 @@ impl BountyContract {
         let is_verified: bool = env.invoke_contract(
             &ver_contract,
             &Symbol::new(&env, "is_verified"),
-            soroban_sdk::vec![&env, mentor.clone().into()],
+            {
+                let mut args: Vec<Val> = Vec::new(&env);
+                args.push_back(mentor.clone().into_val(&env));
+                args
+            },
         );
         if !is_verified {
             panic!("Mentor is not verified");
@@ -333,6 +342,7 @@ impl BountyContract {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Bounty(bounty_id), TTL_THRESHOLD, TTL_BUMP);
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
 
         env.events().publish(
             (symbol_short!("bounty"), symbol_short!("verified")),
@@ -392,6 +402,7 @@ impl BountyContract {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Bounty(bounty_id), TTL_THRESHOLD, TTL_BUMP);
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
 
         env.events().publish(
             (symbol_short!("bounty"), symbol_short!("disputed")),
@@ -433,6 +444,7 @@ impl BountyContract {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Bounty(bounty_id), TTL_THRESHOLD, TTL_BUMP);
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
 
         env.events().publish(
             (symbol_short!("bounty"), symbol_short!("refunded")),
@@ -499,7 +511,10 @@ mod test {
 
     // Minimal mock token contract
     mod mock_token {
-        use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol};
+        use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+
+        const TTL_THRESHOLD: u32 = 500_000;
+        const TTL_BUMP: u32 = 9_000_000;
 
         #[contracttype]
         pub enum TokenKey {
@@ -526,7 +541,11 @@ mod test {
                     .unwrap_or(0);
                 env.storage()
                     .persistent()
-                    .set(&TokenKey::Balance(to), &(bal + amount));
+                    .set(&TokenKey::Balance(to.clone()), &(bal + amount));
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&TokenKey::Balance(to), TTL_THRESHOLD, TTL_BUMP);
+                env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
             }
 
             pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
@@ -540,7 +559,10 @@ mod test {
                 }
                 env.storage()
                     .persistent()
-                    .set(&TokenKey::Balance(from), &(from_bal - amount));
+                    .set(&TokenKey::Balance(from.clone()), &(from_bal - amount));
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&TokenKey::Balance(from), TTL_THRESHOLD, TTL_BUMP);
                 let to_bal: i128 = env
                     .storage()
                     .persistent()
@@ -548,7 +570,11 @@ mod test {
                     .unwrap_or(0);
                 env.storage()
                     .persistent()
-                    .set(&TokenKey::Balance(to), &(to_bal + amount));
+                    .set(&TokenKey::Balance(to.clone()), &(to_bal + amount));
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&TokenKey::Balance(to), TTL_THRESHOLD, TTL_BUMP);
+                env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
             }
         }
     }
@@ -731,7 +757,7 @@ mod test {
         let id = f.post_default_bounty();
         f.client().claim_bounty(&f.learner, &id);
 
-        // Advance time past 48h dispute window
+        // Advance time past 48h dispute window; keep sequence within TTL_BUMP range
         f.env.ledger().set(LedgerInfo {
             timestamp: f.env.ledger().timestamp() + DISPUTE_WINDOW + 1,
             protocol_version: 21,
@@ -751,7 +777,15 @@ mod test {
         let f = TestFixture::setup();
         let id = f.post_default_bounty();
 
-        // Advance time past deadline
+        // Bump all contract instance TTLs before advancing time
+        f.env.as_contract(&f.token_id, || {
+            f.env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
+        });
+        f.env.as_contract(&f.bounty_id, || {
+            f.env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
+        });
+
+        // Advance time past deadline; keep sequence within TTL_BUMP range
         f.env.ledger().set(LedgerInfo {
             timestamp: f.deadline() + 1,
             protocol_version: 21,
@@ -786,6 +820,7 @@ mod test {
         let f = TestFixture::setup();
         let id = f.post_default_bounty();
 
+        // Advance time past deadline; keep sequence within TTL_BUMP range
         f.env.ledger().set(LedgerInfo {
             timestamp: f.deadline() + 1,
             protocol_version: 21,
