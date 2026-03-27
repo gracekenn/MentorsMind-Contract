@@ -11,6 +11,9 @@ members = [
     "contracts/payment_router",
     "contracts/streak_rewards",
     "contracts/shared",
+    "contracts/upgrade_registry",
+    "contracts/rate_limiter",
+    "contracts/performance_bond",
     "tests",
 ]
 

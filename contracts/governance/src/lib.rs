@@ -6,6 +6,7 @@ use soroban_sdk::{
     Symbol,
 };
 
+// Instance storage: frequently read config
 const ADMIN: Symbol = symbol_short!("ADMIN");
 const TOKEN: Symbol = symbol_short!("TOKEN");
 const PROPOSAL_COUNT: Symbol = symbol_short!("PROP_CNT");
@@ -88,7 +89,7 @@ impl GovernanceContract {
         voting_period_secs: Option<u64>,
         quorum_bps: Option<u32>,
     ) {
-        if env.storage().persistent().has(&ADMIN) {
+        if env.storage().instance().has(&ADMIN) {
             panic!("already initialized");
         }
 
@@ -102,11 +103,11 @@ impl GovernanceContract {
             panic!("invalid quorum bps");
         }
 
-        env.storage().persistent().set(&ADMIN, &admin);
-        env.storage().persistent().set(&TOKEN, &mnt_token);
-        env.storage().persistent().set(&VOTING_PERIOD_SECS, &period);
-        env.storage().persistent().set(&QUORUM_BPS, &quorum);
-        env.storage().persistent().set(&PROPOSAL_COUNT, &0u32);
+        env.storage().instance().set(&ADMIN, &admin);
+        env.storage().instance().set(&TOKEN, &mnt_token);
+        env.storage().instance().set(&VOTING_PERIOD_SECS, &period);
+        env.storage().instance().set(&QUORUM_BPS, &quorum);
+        env.storage().instance().set(&PROPOSAL_COUNT, &0u32);
     }
 
     pub fn create_proposal(
@@ -119,13 +120,13 @@ impl GovernanceContract {
         proposer.require_auth();
         Self::require_initialized(&env);
 
-        let mut count: u32 = env.storage().persistent().get(&PROPOSAL_COUNT).unwrap_or(0);
+        let mut count: u32 = env.storage().instance().get(&PROPOSAL_COUNT).unwrap_or(0);
         count = count.checked_add(1).expect("proposal overflow");
 
         let now = env.ledger().timestamp();
         let voting_period_secs: u64 = env
             .storage()
-            .persistent()
+            .instance()
             .get(&VOTING_PERIOD_SECS)
             .unwrap_or(DEFAULT_VOTING_PERIOD_SECS);
 
@@ -146,7 +147,7 @@ impl GovernanceContract {
             votes_against: 0,
         };
 
-        env.storage().persistent().set(&PROPOSAL_COUNT, &count);
+        env.storage().instance().set(&PROPOSAL_COUNT, &count);
         env.storage()
             .persistent()
             .set(&DataKey::Proposal(count), &proposal);
@@ -226,7 +227,7 @@ impl GovernanceContract {
 
         let quorum_bps: u32 = env
             .storage()
-            .persistent()
+            .instance()
             .get(&QUORUM_BPS)
             .unwrap_or(DEFAULT_QUORUM_BPS);
         let total_votes = proposal
@@ -274,7 +275,7 @@ impl GovernanceContract {
     pub fn cancel_proposal(env: Env, proposal_id: u32) {
         let admin: Address = env
             .storage()
-            .persistent()
+            .instance()
             .get(&ADMIN)
             .expect("not initialized");
         admin.require_auth();
@@ -312,7 +313,7 @@ impl GovernanceContract {
     }
 
     fn require_initialized(env: &Env) {
-        if !env.storage().persistent().has(&ADMIN) {
+        if !env.storage().instance().has(&ADMIN) {
             panic!("not initialized");
         }
     }
@@ -329,7 +330,7 @@ impl GovernanceContract {
 
     fn token_address(env: &Env) -> Address {
         env.storage()
-            .persistent()
+            .instance()
             .get(&TOKEN)
             .expect("token not set")
     }
@@ -352,12 +353,12 @@ impl GovernanceContract {
         match action {
             ProposalAction::UpdateFee(new_fee_bps) => {
                 env.storage()
-                    .persistent()
+                    .instance()
                     .set(&CURRENT_FEE_BPS, new_fee_bps);
             }
             ProposalAction::UpdateAutoRelease(new_delay) => {
                 env.storage()
-                    .persistent()
+                    .instance()
                     .set(&CURRENT_AUTO_RELEASE_SECS, new_delay);
             }
             ProposalAction::AddAsset(asset) => {
@@ -366,7 +367,7 @@ impl GovernanceContract {
                     .set(&DataKey::ApprovedAsset(asset.clone()), &true);
             }
             ProposalAction::UpdateAdmin(new_admin) => {
-                env.storage().persistent().set(&ADMIN, new_admin);
+                env.storage().instance().set(&ADMIN, new_admin);
             }
         }
     }
