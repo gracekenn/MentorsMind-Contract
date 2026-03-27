@@ -103,7 +103,9 @@ impl StakingContract {
             return Err(Error::AlreadyInitialized);
         }
         env.storage().persistent().set(&DataKey::Admin, &admin);
-        env.storage().persistent().set(&DataKey::MNTToken, &mnt_token);
+        env.storage()
+            .persistent()
+            .set(&DataKey::MNTToken, &mnt_token);
         Ok(())
     }
 
@@ -128,7 +130,11 @@ impl StakingContract {
             return Err(Error::InvalidAmount);
         }
 
-        if env.storage().persistent().has(&DataKey::Stake(mentor.clone())) {
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Stake(mentor.clone()))
+        {
             return Err(Error::AlreadyStaked);
         }
 
@@ -519,9 +525,7 @@ mod test {
     #[test]
     fn test_initialize_rejects_double_init() {
         let f = Fixture::setup();
-        let result = f
-            .client()
-            .try_initialize(&f.admin, &f.mnt_id);
+        let result = f.client().try_initialize(&f.admin, &f.mnt_id);
         assert_eq!(result, Err(Ok(Error::AlreadyInitialized)));
     }
 }

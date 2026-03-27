@@ -2,22 +2,15 @@
 resolver = "2"
 members = [
     "escrow",
+    "contracts/governance",
     "contracts/allowance",
-    "contracts/interface_registry",
     "contracts/verification",
     "contracts/oracle",
-    "contracts/payment_router",
-    "contracts/referral",
-    "contracts/session_nft",
-    "contracts/staking",
-    "contracts/subscription_analytics",
     "contracts/timelock",
-    "contracts/treasury",
-    "contracts/verification",
     "contracts/vesting",
     "contracts/payment_router",
     "contracts/streak_rewards",
-    "contracts/kyc_registry",
+    "contracts/shared",
     "tests",
 ]
 
@@ -27,8 +20,8 @@ edition = "2021"
 rust-version = "1.70"
 
 [workspace.dependencies]
-soroban-sdk = "21.0.0"
-soroban-token-sdk = "21.0.0"
+soroban-sdk = "21.7.0"
+soroban-token-sdk = "21.7.0"
 
 [profile.release]
 opt-level = "z"
