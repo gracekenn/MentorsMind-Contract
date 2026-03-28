@@ -4,6 +4,9 @@ use soroban_sdk::{
     Symbol, Vec,
 };
 
+#[cfg(test)]
+pub mod invariants;
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EscrowStatus {
@@ -166,7 +169,7 @@ pub struct EscrowContract;
 
 #[soroban_sdk::contractclient(name = "KycRegistryClient")]
 pub trait KycRegistryTrait {
-    fn is_kyc_valid(env: Env, user: Address, min_level: KycLevel) -> bool;
+    fn is_kyc_valid(env: Env, user: Address) -> bool;
 }
 
 #[soroban_sdk::contractclient(name = "SanctionsClient")]
@@ -322,7 +325,7 @@ impl EscrowContract {
         env.storage().persistent().set(&ESCROW_COUNT, &count);
         env.storage()
             .persistent()
-            .extend_ttl(&ESCROW_COUNT, ESCROW_TTL_THRESHOLD, ESCROW_TTL_BUMP);
+            .extend_ttl(&ESCROW_COUNT, EXTEND_TTL_THRESHOLD, EXTEND_TTL_BUMP);
 
         token_client.transfer(&learner, &env.current_contract_address(), &amount);
 
@@ -331,15 +334,29 @@ impl EscrowContract {
             mentor: mentor.clone(),
             learner: learner.clone(),
             amount,
-            session_id,
-            token_address.clone(),
+            session_id: session_id.clone(),
+            status: EscrowStatus::Active,
+            created_at: env.ledger().timestamp(),
+            token_address: token_address.clone(),
+            platform_fee: 0,
+            net_amount: 0,
             session_end_time,
-            0,
-            amount,
-            token_address.clone(),
-            token_address,
+            auto_release_delay,
+            dispute_reason: Symbol::new(&env, ""),
+            resolved_at: 0,
+            usd_amount: 0,
+            quoted_token_amount: amount,
+            send_asset: token_address.clone(),
+            dest_asset: token_address.clone(),
             total_sessions,
-        )
+            sessions_completed: 0,
+        };
+        env.storage().persistent().set(&DataKey::Escrow(count), &escrow);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Session(session_id.clone()), &count);
+        
+        count
     }
 
     pub fn release_funds(env: Env, caller: Address, escrow_id: u64) {

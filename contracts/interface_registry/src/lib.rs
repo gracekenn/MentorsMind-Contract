@@ -35,9 +35,10 @@ impl InterfaceRegistryContract {
             panic!("Already initialized");
         }
         env.storage().persistent().set(&DataKey::Admin, &admin);
+        let empty_vec: Vec<Symbol> = Vec::new(&env);
         env.storage()
             .persistent()
-            .set(&DataKey::InterfaceIds, &Vec::new(&env));
+            .set(&DataKey::InterfaceIds, &empty_vec);
     }
 
     pub fn register_interface(env: Env, contract: Address, interface_id: Symbol, version: u32) {
@@ -73,12 +74,12 @@ impl InterfaceRegistryContract {
 
         if is_new {
             env.events().publish(
-                (symbol_short!("interface_registered"), interface_id),
+                (symbol_short!("iface_reg"), interface_id),
                 (contract, version),
             );
         } else {
             env.events().publish(
-                (symbol_short!("interface_updated"), interface_id),
+                (symbol_short!("iface_upd"), interface_id),
                 (contract, version),
             );
         }
