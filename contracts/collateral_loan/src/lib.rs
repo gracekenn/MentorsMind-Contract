@@ -54,7 +54,9 @@ impl CollateralLoanContract {
 
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::MntToken, &mnt_token);
-        env.storage().instance().set(&DataKey::UsdcToken, &usdc_token);
+        env.storage()
+            .instance()
+            .set(&DataKey::UsdcToken, &usdc_token);
         env.storage().instance().set(&DataKey::Oracle, &oracle);
         env.storage().instance().set(&DataKey::MntAsset, &mnt_asset);
     }
@@ -82,7 +84,11 @@ impl CollateralLoanContract {
         let usdc = Self::usdc_token(&env);
 
         let mnt_client = token::Client::new(&env, &mnt);
-        mnt_client.transfer(&borrower, &env.current_contract_address(), &collateral_amount);
+        mnt_client.transfer(
+            &borrower,
+            &env.current_contract_address(),
+            &collateral_amount,
+        );
 
         let usdc_client = token::Client::new(&env, &usdc);
         usdc_client.transfer(&env.current_contract_address(), &borrower, &borrow_amount);
